@@ -18,18 +18,44 @@ import {
 import './App.css';
 
 function getAirQuality(pm25) {
+  if (!Number.isFinite(pm25)) return { label: 'Unavailable', tone: 'unknown' };
   if (pm25 <= 30) return { label: 'Good', tone: 'good' };
   if (pm25 <= 60) return { label: 'Satisfactory', tone: 'satisfactory' };
   if (pm25 <= 90) return { label: 'Moderate', tone: 'moderate' };
   if (pm25 <= 120) return { label: 'Poor', tone: 'poor' };
-  return { label: 'Very poor', tone: 'very-poor' };
+  if (pm25 <= 250) return { label: 'Very poor', tone: 'very-poor' };
+  return { label: 'Severe', tone: 'severe' };
 }
 
-function createAirQualityIcon(pm25) {
-  const tone = getAirQuality(pm25).tone;
+function getIndicativeAqiQuality(aqi) {
+  if (!Number.isFinite(aqi)) return { label: 'Unavailable', tone: 'unknown' };
+  if (aqi <= 50) return { label: 'Good', tone: 'good' };
+  if (aqi <= 100) return { label: 'Satisfactory', tone: 'satisfactory' };
+  if (aqi <= 200) return { label: 'Moderate', tone: 'moderate' };
+  if (aqi <= 300) return { label: 'Poor', tone: 'poor' };
+  if (aqi <= 400) return { label: 'Very poor', tone: 'very-poor' };
+  return { label: 'Severe', tone: 'severe' };
+}
+
+function getRegionMetric(region, mapMetric) {
+  return mapMetric === 'aqi' ? region.indicative_aqi : region.pm25;
+}
+
+function getRegionQuality(region, mapMetric) {
+  return mapMetric === 'aqi'
+    ? getIndicativeAqiQuality(region.indicative_aqi)
+    : getAirQuality(region.pm25);
+}
+
+function createAirQualityIcon(region, mapMetric) {
+  const value = getRegionMetric(region, mapMetric);
+  const tone = getRegionQuality(region, mapMetric).tone;
+  const markerValue = mapMetric === 'aqi'
+    ? Math.round(value)
+    : value < 1 ? value.toFixed(2) : value.toFixed(1);
   return L.divIcon({
     className: 'aqi-marker-icon',
-    html: `<span class="aqi-marker ${tone}">${Math.round(pm25)}</span>`,
+    html: `<span class="aqi-marker ${tone}">${markerValue}</span>`,
     iconSize: [42, 34],
     iconAnchor: [21, 17],
     popupAnchor: [0, -18],
@@ -104,6 +130,8 @@ FocusNearestRegion.propTypes = {
 
 export default function App() {
   const [regions, setRegions] = useState([]);
+  const [regionsError, setRegionsError] = useState('');
+  const [regionsLoading, setRegionsLoading] = useState(true);
   const [watchlist, setWatchlist] = useState([]);
   const [userLocation, setUserLocation] = useState(null);
   const [loadingGeo, setLoadingGeo] = useState(false);
@@ -112,11 +140,19 @@ export default function App() {
   const [nearestResult, setNearestResult] = useState(null);
   const [nearestError, setNearestError] = useState('');
   const [lookingUpNearest, setLookingUpNearest] = useState(false);
+  const [mapMetric, setMapMetric] = useState('pm25');
 
   useEffect(() => {
     axios.get('http://localhost:8000/api/regions')
-      .then((response) => setRegions(response.data))
-      .catch((error) => console.error('Error fetching regions:', error));
+      .then((response) => {
+        setRegions(response.data);
+        setRegionsError('');
+      })
+      .catch((error) => {
+        console.error('Error fetching regions:', error);
+        setRegionsError(error.response?.data?.detail ?? 'Could not load live station data.');
+      })
+      .finally(() => setRegionsLoading(false));
   }, []);
 
   const handleGetLocation = () => {
@@ -155,18 +191,33 @@ export default function App() {
     setWatchlist((current) => current.filter((item) => item.name !== name));
   };
 
-  const matchingRegions = regions.filter((region) => (
+  const namedAreas = regions.filter((region) => region.is_area);
+  const matchingRegions = namedAreas.filter((region) => (
     region.name.toLowerCase().includes(search.trim().toLowerCase())
   ));
   const filteredRegions = nearestResult ? [nearestResult.region] : matchingRegions;
-  const averagePm25 = regions.length
-    ? Math.round(regions.reduce((total, region) => total + region.pm25, 0) / regions.length)
+  const areaReadings = regions.filter(
+    (region) => region.is_area && Number.isFinite(region.pm25),
+  );
+  const averagePm25 = areaReadings.length
+    ? Math.round(areaReadings.reduce((total, region) => total + region.pm25, 0) / areaReadings.length)
     : null;
   const averageQuality = averagePm25 === null ? null : getAirQuality(averagePm25);
-  const monitoredCount = regions.length;
+  const monitoredCount = areaReadings.length;
   const regionIcons = useMemo(
-    () => new Map(regions.map((region) => [region.name, createAirQualityIcon(region.pm25)])),
-    [regions],
+    () => new Map(
+      regions
+        .filter((region) => Number.isFinite(getRegionMetric(region, mapMetric)))
+        .map((region) => [
+          region.id ?? region.name,
+          createAirQualityIcon(region, mapMetric),
+        ]),
+    ),
+    [mapMetric, regions],
+  );
+  const mapRegions = regions.filter(
+    (region) => Number.isFinite(getRegionMetric(region, mapMetric))
+      && (!region.is_area || region.is_interpolated),
   );
 
   const handleFindClosest = async (event) => {
@@ -200,7 +251,10 @@ export default function App() {
           <span className="brand-name">air<span>watch</span></span>
         </a>
         <div className="topbar-right">
-          <span className="network-status"><span className="status-dot" /> Demo readings</span>
+          <span className={`network-status ${regionsError ? 'network-status-error' : ''}`}>
+            <span className="status-dot" />
+            {regionsError ? 'Live data unavailable' : regionsLoading ? 'Connecting to stations' : 'Live station data'}
+          </span>
           <button className="location-button" onClick={handleGetLocation} disabled={loadingGeo}>
             <Navigation size={16} />
             <span>{loadingGeo ? 'Finding you…' : 'Use my location'}</span>
@@ -221,7 +275,7 @@ export default function App() {
         <section className="overview-grid" aria-label="Air quality overview">
           <article className="overview-card overview-card-primary">
             <div className="card-icon"><Wind size={19} /></div>
-            <p className="metric-label">Average PM2.5</p>
+            <p className="metric-label">Average area PM2.5</p>
             <div className="metric-value">{averagePm25 ?? '—'} <span>µg/m³</span></div>
             <div className={`quality-pill ${averageQuality?.tone ?? ''}`}>
               <span className="quality-dot" />
@@ -232,7 +286,7 @@ export default function App() {
             <div className="card-icon card-icon-lime"><MapPin size={19} /></div>
             <p className="metric-label">Areas covered</p>
             <div className="metric-value">{monitoredCount.toString().padStart(2, '0')} <span>areas</span></div>
-            <p className="metric-note">Neighborhoods and nearby towns</p>
+            <p className="metric-note">Areas with a fresh nearby station reading</p>
           </article>
           <article className="overview-card">
             <div className="card-icon card-icon-blue"><Leaf size={19} /></div>
@@ -247,6 +301,12 @@ export default function App() {
             <ShieldAlert size={17} />
             <span>{geoError}</span>
             <button onClick={() => setGeoError('')} aria-label="Dismiss location message"><X size={16} /></button>
+          </div>
+        )}
+        {regionsError && (
+          <div className="inline-alert" role="alert">
+            <ShieldAlert size={17} />
+            <span>{regionsError}</span>
           </div>
         )}
 
@@ -275,7 +335,10 @@ export default function App() {
                         <span className={`place-marker ${quality.tone}`}><MapPin size={16} /></span>
                         <div className="place-info">
                           <strong>{item.name}</strong>
-                          <span><i className={`tiny-dot ${quality.tone}`} /> {quality.label} · PM2.5 {item.pm25}</span>
+                          <span>
+                            <i className={`tiny-dot ${quality.tone}`} />
+                            {Number.isFinite(item.pm25) ? `${quality.label} · PM2.5 ${item.pm25}` : 'No fresh PM2.5 reading'}
+                          </span>
                         </div>
                         <button
                           className="icon-button remove-button"
@@ -308,7 +371,7 @@ export default function App() {
                   <p className="section-kicker">EXPLORE THE CITY</p>
                   <h2>Nearby areas</h2>
                 </div>
-                <span className="areas-total">{regions.length} locations</span>
+                <span className="areas-total">{namedAreas.length} areas</span>
               </div>
               <form className="area-search" onSubmit={handleFindClosest}>
                 <label className="search-field">
@@ -340,17 +403,23 @@ export default function App() {
               <div className="area-list">
                 {filteredRegions.length === 0 ? (
                   <p className="no-results">
-                    {regions.length ? 'No neighborhoods match your search.' : 'Connecting to the monitoring network…'}
+                    {regionsError || (regionsLoading ? 'Connecting to official monitoring stations…' : 'No neighborhoods match your search.')}
                   </p>
                 ) : filteredRegions.map((region) => {
-                  const quality = getAirQuality(region.pm25);
+                  const quality = Number.isFinite(region.pm25)
+                    ? getAirQuality(region.pm25)
+                    : { label: 'Unavailable', tone: 'unknown' };
                   const isPinned = watchlist.some((item) => item.name === region.name);
                   return (
-                    <div className="area-row" key={region.name}>
+                    <div className="area-row" key={region.id ?? region.name}>
                       <span className={`area-dot ${quality.tone}`} />
                       <div className="area-copy">
                         <strong>{region.name}</strong>
-                        <span>PM2.5 <b>{region.pm25}</b> · {quality.label}</span>
+                        <span>
+                          {Number.isFinite(region.pm25)
+                            ? <>PM2.5 <b>{region.pm25}</b> · {quality.label} · {region.is_interpolated ? 'estimated' : 'measured'}</>
+                            : 'No fresh official reading nearby'}
+                        </span>
                       </div>
                       <button
                         className={`pin-button ${isPinned ? 'is-pinned' : ''}`}
@@ -372,11 +441,37 @@ export default function App() {
               <div>
                 <p className="section-kicker">CITYWIDE AREA COVERAGE</p>
                 <h2>Air quality map</h2>
-                <p className="map-subtitle">Explore Bengaluru neighborhoods and nearby towns. Readings are illustrative demo data.</p>
+                <p className="map-subtitle">
+                  {mapMetric === 'aqi'
+                    ? 'Indicative AQI uses recent pollutant readings; it is not the official time-averaged CPCB AQI.'
+                    : 'PM2.5 concentration from CPCB/KSPCB stations and distance-weighted area estimates.'}
+                </p>
               </div>
-              <button className="map-action" onClick={handleGetLocation} disabled={loadingGeo}>
-                <Navigation size={15} /> Locate me
-              </button>
+              <div className="map-controls">
+                <div className="map-control-row">
+                  <div className="map-mode-toggle" role="group" aria-label="Map metric">
+                    <button
+                      type="button"
+                      className={mapMetric === 'pm25' ? 'is-selected' : ''}
+                      aria-pressed={mapMetric === 'pm25'}
+                      onClick={() => setMapMetric('pm25')}
+                    >
+                      PM2.5
+                    </button>
+                    <button
+                      type="button"
+                      className={mapMetric === 'aqi' ? 'is-selected' : ''}
+                      aria-pressed={mapMetric === 'aqi'}
+                      onClick={() => setMapMetric('aqi')}
+                    >
+                      Indicative AQI
+                    </button>
+                  </div>
+                  <button className="map-action" onClick={handleGetLocation} disabled={loadingGeo}>
+                    <Navigation size={15} /> Locate me
+                  </button>
+                </div>
+              </div>
             </div>
             <div className="map-wrap">
               <MapContainer
@@ -392,27 +487,55 @@ export default function App() {
                   attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
-                {regions.map((region) => (
-                  <Marker
-                    key={region.name}
-                    position={[region.lat, region.lon]}
-                    icon={regionIcons.get(region.name)}
-                    title={`${region.name}: PM2.5 ${Math.round(region.pm25)} µg/m³`}
-                  >
-                    <Popup>
-                      <div className="map-popup">
-                        <span className={`area-dot ${getAirQuality(region.pm25).tone}`} />
-                        <div>
-                          <strong>{region.name}</strong>
-                          <p>PM2.5 <b>{region.pm25} µg/m³</b> · {getAirQuality(region.pm25).label}</p>
-                          <button onClick={() => addToWatchlist(region)}>
-                            <Plus size={13} /> Add to watchlist
-                          </button>
+                {mapRegions.map((region) => {
+                  const value = getRegionMetric(region, mapMetric);
+                  const quality = getRegionQuality(region, mapMetric);
+                  const valueLabel = mapMetric === 'aqi'
+                    ? `Indicative AQI ${Math.round(value)}`
+                    : `PM2.5 ${value} µg/m³`;
+                  return (
+                    <Marker
+                      key={region.id ?? region.name}
+                      position={[region.lat, region.lon]}
+                      icon={regionIcons.get(region.id ?? region.name)}
+                      title={`${region.name}: ${valueLabel}, ${quality.label} (${region.is_interpolated ? 'estimated' : 'measured'})`}
+                    >
+                      <Popup>
+                        <div className="map-popup">
+                          <span className={`area-dot ${quality.tone}`} />
+                          <div>
+                            <strong>{region.name}</strong>
+                            <p>
+                              {mapMetric === 'aqi'
+                                ? <>Indicative AQI <b>{Math.round(value)}</b> · {quality.label}</>
+                                : <>PM2.5 <b>{value} µg/m³</b> · {quality.label}</>}
+                              {' · '}{region.is_interpolated ? 'estimated' : 'measured'}
+                            </p>
+                            {mapMetric === 'aqi' && region.indicative_aqi_dominant_pollutant && (
+                              <p>Highest sub-index: {region.indicative_aqi_dominant_pollutant}</p>
+                            )}
+                            {mapMetric === 'aqi' && (
+                              <p className="aqi-caveat">{region.indicative_aqi_basis}</p>
+                            )}
+                            {region.source && <p>Source: {region.source}</p>}
+                            {region.is_interpolated && region.source_station_count > 0 && (
+                              <p>
+                                Estimated from {region.source_station_count} nearby station(s)
+                                {Number.isFinite(region.nearest_station_distance_km)
+                                  ? ` · nearest ${region.nearest_station_distance_km} km`
+                                  : ''}
+                              </p>
+                            )}
+                            {region.observed_at && <p>Updated: {new Date(region.observed_at).toLocaleString()}</p>}
+                            <button onClick={() => addToWatchlist(region)}>
+                              <Plus size={13} /> Add to watchlist
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    </Popup>
-                  </Marker>
-                ))}
+                      </Popup>
+                    </Marker>
+                  );
+                })}
                 {userLocation && (
                   <Marker position={[userLocation.lat, userLocation.lon]}>
                     <Popup><strong>Your current location</strong></Popup>
@@ -421,13 +544,24 @@ export default function App() {
               </MapContainer>
               <div className="map-legend">
                 <span><i className="tiny-dot good" /> Good</span>
+                <span><i className="tiny-dot satisfactory" /> Satisfactory</span>
                 <span><i className="tiny-dot moderate" /> Moderate</span>
                 <span><i className="tiny-dot poor" /> Poor</span>
+                <span><i className="tiny-dot very-poor" /> Very poor</span>
+                <span><i className="tiny-dot severe" /> Severe</span>
               </div>
+              {mapMetric === 'aqi' && mapRegions.length === 0 && (
+                <div className="map-data-notice" role="status">
+                  No locations currently have enough recent pollutant readings for an indicative AQI.
+                </div>
+              )}
             </div>
             <div className="map-footer">
-              <span><span className="status-dot" /> {regions.length} areas shown</span>
-              <span>PM2.5 · µg/m³</span>
+              <span>
+                <span className="status-dot" />
+                {mapRegions.length} readings shown · {regions.length - mapRegions.length} unavailable
+              </span>
+              <span>{mapMetric === 'aqi' ? 'Indicative AQI · not official CPCB AQI' : 'PM2.5 · µg/m³'}</span>
             </div>
           </section>
         </section>

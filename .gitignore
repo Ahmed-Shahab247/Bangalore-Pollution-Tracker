@@ -3,6 +3,8 @@ backend/__pycache__/
 backend/venv/
 backend/artifacts/
 *.pyc
+.env
+backend/.env
 
 # Node / React
 frontend/node_modules/

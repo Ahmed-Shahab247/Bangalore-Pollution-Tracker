@@ -64,6 +64,15 @@
   font-weight: 550;
 }
 
+.network-status-error {
+  color: #a45849;
+}
+
+.network-status-error .status-dot {
+  background: #d8785e;
+  box-shadow: 0 0 0 3px rgba(216, 120, 94, .12);
+}
+
 .status-dot,
 .quality-dot {
   flex: 0 0 auto;
@@ -259,14 +268,39 @@
   box-shadow: none;
 }
 
+.quality-pill.satisfactory .quality-dot {
+  background: #a6b93c;
+}
+
+.quality-pill.moderate .quality-dot {
+  background: #d2a441;
+}
+
+.quality-pill.poor .quality-dot,
+.quality-pill.very-poor .quality-dot,
+.quality-pill.severe .quality-dot {
+  background: #d8785e;
+}
+
+.quality-pill.severe .quality-dot {
+  background: #872c48;
+}
+
 .quality-pill.moderate {
   border-color: #f0e5c7;
   color: #937232;
   background: #fffbef;
 }
 
+.quality-pill.satisfactory {
+  border-color: #e6edcc;
+  color: #718238;
+  background: #f8faed;
+}
+
 .quality-pill.poor,
-.quality-pill.very-poor {
+.quality-pill.very-poor,
+.quality-pill.severe {
   border-color: #f0d7d0;
   color: #aa5d4c;
   background: #fff7f4;
@@ -423,8 +457,14 @@
   background: #faf4df;
 }
 
+.place-marker.satisfactory {
+  color: #74853a;
+  background: #f3f6e5;
+}
+
 .place-marker.poor,
-.place-marker.very-poor {
+.place-marker.very-poor,
+.place-marker.severe {
   color: #ad6350;
   background: #fcf0ea;
 }
@@ -642,11 +682,28 @@
   background: #d2a441;
 }
 
+.area-dot.satisfactory,
+.tiny-dot.satisfactory {
+  background: #a6b93c;
+}
+
 .area-dot.poor,
 .area-dot.very-poor,
+.area-dot.severe,
 .tiny-dot.poor,
-.tiny-dot.very-poor {
+.tiny-dot.very-poor,
+.tiny-dot.severe {
   background: #d8785e;
+}
+
+.area-dot.severe,
+.tiny-dot.severe {
+  background: #872c48;
+}
+
+.area-dot.unknown,
+.tiny-dot.unknown {
+  background: #a7b0aa;
 }
 
 .tiny-dot {
@@ -724,6 +781,52 @@
   margin: 6px 0 0;
   color: #8a968e;
   font-size: 10px;
+  line-height: 1.5;
+}
+
+.map-controls {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.map-control-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.map-mode-toggle {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid #e1e9e0;
+  border-radius: 9px;
+  background: #f7f9f6;
+}
+
+.map-mode-toggle button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  color: #718078;
+  background: transparent;
+  font-size: 9px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.map-mode-toggle button.is-selected {
+  color: #286344;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(24, 54, 37, .1);
+}
+
+.map-mode-toggle button:focus-visible {
+  outline: 2px solid #6da17a;
+  outline-offset: 2px;
 }
 
 .map-action {
@@ -799,13 +902,19 @@
   background: #d95c50;
 }
 
+.aqi-marker.severe {
+  background: #872c48;
+}
+
 .map-legend {
   position: absolute;
   z-index: 500;
   right: 13px;
   bottom: 13px;
   display: flex;
-  gap: 13px;
+  max-width: calc(100% - 26px);
+  flex-wrap: wrap;
+  gap: 7px 13px;
   padding: 10px 12px;
   border: 1px solid rgba(226, 232, 224, .9);
   border-radius: 9px;
@@ -820,6 +929,24 @@
   color: #68766d;
   font-size: 9px;
   font-weight: 550;
+}
+
+.map-data-notice {
+  position: absolute;
+  z-index: 500;
+  top: 12px;
+  left: 50%;
+  max-width: calc(100% - 32px);
+  padding: 9px 12px;
+  transform: translateX(-50%);
+  border: 1px solid #e7dfc8;
+  border-radius: 8px;
+  color: #77633a;
+  background: rgba(255, 252, 241, .96);
+  box-shadow: 0 3px 12px rgba(25, 45, 32, .08);
+  font-size: 10px;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .map-footer {
@@ -859,6 +986,12 @@
   margin: 4px 0 9px;
   color: #78847c;
   font-size: 10px;
+}
+
+.map-popup .aqi-caveat {
+  max-width: 250px;
+  color: #8a7651;
+  line-height: 1.45;
 }
 
 .map-popup button {
@@ -1029,12 +1162,22 @@
   }
 
   .map-heading {
+    align-items: stretch;
+    flex-direction: column;
     padding: 17px 15px 14px;
   }
 
   .map-subtitle {
-    max-width: 220px;
+    max-width: none;
     line-height: 1.45;
+  }
+
+  .map-controls {
+    align-items: stretch;
+  }
+
+  .map-control-row {
+    justify-content: space-between;
   }
 
   .map-action {
