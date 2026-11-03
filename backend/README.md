@@ -1,6 +1,6 @@
 # Backend: live Bengaluru air quality
 
-The API uses OpenAQ v3 as a transport for CPCB/KSPCB reference-station data. It does not use the historical CSV or the saved offline model artifacts to serve live readings.
+The API uses OpenAQ v3 as a transport for CPCB/KSPCB reference-station data. It does not use the official-monitor historical CSV or K-Means artifacts to serve those live readings. A separate experimental forecast endpoint uses an Open-Meteo-trained PM2.5 model.
 
 ## Run locally
 
@@ -31,3 +31,33 @@ Get an API key from the [OpenAQ API documentation](https://docs.openaq.org/using
 - OpenAQ may not expose eligible CPCB/KSPCB stations for Bengaluru at a given time. In that case the API reports a data error rather than showing fabricated readings.
 
 `train_model.py` is an optional offline trainer. It requires at least three complete, CPCB/KSPCB-attributed historical rows in `data/historical_bengaluru_aqi.csv` with columns `location_name,observed_at,source,pm25,pm10,no2`; `wind_speed` is optional. Its saved artifacts are not used by the live API.
+
+## Download Open-Meteo historical data
+
+The optional collector downloads Bengaluru hourly PM2.5, PM10, NO2, wind, temperature, humidity, and precipitation data into a separate file:
+
+```powershell
+py fetch_open_meteo_history.py
+```
+
+By default, it fetches from August 2022 through yesterday (Asia/Kolkata) and creates or updates `data/open_meteo_bengaluru_history.csv`. To fetch a smaller date range:
+
+```powershell
+py fetch_open_meteo_history.py --start-date 2024-01-01 --end-date 2024-01-31
+```
+
+The output is deliberately separate from `historical_bengaluru_aqi.csv`: Open-Meteo values are modelled grid-cell estimates, not CPCB/KSPCB monitor observations. The global CAMS air-quality product is roughly 45 km spatial and 3-hourly temporal resolution, so it is suitable for experimenting with city-level patterns and forecasts, not distinguishing adjacent neighborhoods. Wind components (`wind_u`, `wind_v`) are derived from wind speed and direction. Re-running the collector updates matching timestamps without duplicating rows.
+
+Open-Meteo air-quality data is based on CAMS global atmospheric composition data; weather comes from Open-Meteo's Historical Forecast API. Cite [Open-Meteo](https://open-meteo.com/) and the [CAMS data provider](https://atmosphere.copernicus.eu/) when presenting results. See the [Air Quality API](https://open-meteo.com/en/docs/air-quality-api) and [Historical Forecast API](https://open-meteo.com/en/docs/historical-forecast-api) for data details and limitations.
+
+## Train the PM2.5 forecasting model
+
+After collecting the separate Open-Meteo dataset, train and evaluate city-level, three-hour and twelve-hour PM2.5 forecasters:
+
+```powershell
+py train_forecast_model.py
+```
+
+The script fits a separate model per horizon, uses a chronological 80/20 holdout, compares mean absolute error against persistence and same-time-yesterday baselines, then saves both models to `artifacts/pm25_forecaster.joblib`. The dashboard lets the user choose a 3-hour or 12-hour horizon via `GET /api/forecast?horizon_hours=3` or `GET /api/forecast?horizon_hours=12`. The endpoint fetches recent Open-Meteo inputs and needs no API key. The forecast card shows the selected model's holdout error and an approximate residual-based interval; it is a city-grid estimate, not an official or neighborhood reading. Re-run the trainer after refreshing the data to update both models.
+
+The current dataset produced holdout MAEs of 3.31 µg/m³ at 3 hours (versus 4.71 persistence and 6.60 same-time-yesterday) and 5.44 µg/m³ at 12 hours (versus 8.45 persistence and 6.60 same-time-yesterday). These are evaluations against Open-Meteo historical data, not independent CPCB/KSPCB ground truth.

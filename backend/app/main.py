@@ -14,6 +14,7 @@ from app.data_pipeline import (
     get_live_regions,
     predict_live_cluster,
 )
+from app.forecasting import ForecastError, get_pm25_forecast
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -52,6 +53,23 @@ def predict_cluster(payload: PollutionPayload):
     except AirQualityDataError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     return {"location": payload.location_name, **cluster}
+
+
+@app.get("/api/forecast")
+def get_air_quality_forecast(horizon_hours: int = 3, force_refresh: bool = False):
+    if horizon_hours not in (3, 12):
+        raise HTTPException(
+            status_code=400,
+            detail="Forecast horizon must be 3 or 12 hours.",
+        )
+    try:
+        return get_pm25_forecast(
+            horizon_hours=horizon_hours,
+            force_refresh=force_refresh,
+        )
+    except ForecastError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
 
 def get_area_locations():
     """Return display locations; measurements are always fetched separately."""

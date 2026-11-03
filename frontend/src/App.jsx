@@ -11,6 +11,7 @@ import {
   MapPin,
   Navigation,
   Plus,
+  RefreshCw,
   ShieldAlert,
   Wind,
   X,
@@ -141,6 +142,11 @@ export default function App() {
   const [nearestError, setNearestError] = useState('');
   const [lookingUpNearest, setLookingUpNearest] = useState(false);
   const [mapMetric, setMapMetric] = useState('pm25');
+  const [forecast, setForecast] = useState(null);
+  const [forecastError, setForecastError] = useState('');
+  const [forecastLoading, setForecastLoading] = useState(true);
+  const [forecastRefreshCount, setForecastRefreshCount] = useState(0);
+  const [forecastHorizon, setForecastHorizon] = useState(3);
 
   useEffect(() => {
     axios.get('http://localhost:8000/api/regions')
@@ -154,6 +160,34 @@ export default function App() {
       })
       .finally(() => setRegionsLoading(false));
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    setForecastLoading(true);
+    axios.get('http://localhost:8000/api/forecast', {
+      params: {
+        horizon_hours: forecastHorizon,
+        ...(forecastRefreshCount > 0 ? { force_refresh: true } : {}),
+      },
+    })
+      .then((response) => {
+        if (!active) return;
+        setForecast(response.data);
+        setForecastError('');
+      })
+      .catch((error) => {
+        if (!active) return;
+        console.error('Error fetching PM2.5 forecast:', error);
+        setForecastError(error.response?.data?.detail ?? 'Could not load the PM2.5 forecast.');
+      })
+      .finally(() => {
+        if (active) setForecastLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [forecastHorizon, forecastRefreshCount]);
 
   const handleGetLocation = () => {
     setGeoError('');
@@ -294,6 +328,87 @@ export default function App() {
             <div className="metric-value">{watchlist.length.toString().padStart(2, '0')} <span>saved</span></div>
             <p className="metric-note">Neighborhoods you’re keeping an eye on</p>
           </article>
+        </section>
+
+        <section
+          className="forecast-panel"
+          aria-label={`${forecastHorizon}-hour PM2.5 forecast`}
+        >
+          <div className="forecast-heading">
+            <div>
+              <p className="section-kicker">EXPERIMENTAL CITY-LEVEL OUTLOOK</p>
+              <h2>{forecastHorizon}-hour PM2.5 forecast</h2>
+              <p>Machine-learning estimate for Bengaluru, based on recent modelled air and weather data.</p>
+            </div>
+            <div className="forecast-actions">
+              <div className="map-mode-toggle forecast-horizon-toggle" role="group" aria-label="Forecast horizon">
+                {[3, 12].map((horizon) => (
+                  <button
+                    key={horizon}
+                    type="button"
+                    className={forecastHorizon === horizon ? 'is-selected' : ''}
+                    aria-pressed={forecastHorizon === horizon}
+                    onClick={() => setForecastHorizon(horizon)}
+                  >
+                    {horizon} hours
+                  </button>
+                ))}
+              </div>
+              <button
+                className="forecast-refresh"
+                onClick={() => setForecastRefreshCount((count) => count + 1)}
+                disabled={forecastLoading}
+                aria-label="Refresh PM2.5 forecast"
+              >
+                <RefreshCw size={14} />
+                {forecastLoading ? 'Updating…' : 'Refresh'}
+              </button>
+            </div>
+          </div>
+          {forecastLoading && <p className="forecast-message">Loading forecast…</p>}
+          {forecastError && <p className="forecast-message forecast-error" role="alert">{forecastError}</p>}
+          {forecast && !forecastError && (
+            <>
+              <div className="forecast-results">
+                <div className="forecast-primary">
+                  <span>Predicted PM2.5</span>
+                  <strong>{forecast.pm25_prediction} <small>µg/m³</small></strong>
+                  <span className={`quality-pill ${getAirQuality(forecast.pm25_prediction).tone}`}>
+                    <span className="quality-dot" />
+                    {getAirQuality(forecast.pm25_prediction).label}
+                  </span>
+                </div>
+                <div className="forecast-detail">
+                  <span>Forecast for</span>
+                  <strong>
+                    {new Date(forecast.forecast_for).toLocaleString('en-IN', {
+                      weekday: 'short',
+                      hour: 'numeric',
+                      minute: '2-digit',
+                    })}
+                  </strong>
+                </div>
+                <div className="forecast-detail">
+                  <span>Approx. prediction range</span>
+                  <strong>
+                    {forecast.prediction_interval.low}–{forecast.prediction_interval.high} µg/m³
+                  </strong>
+                </div>
+                <div className="forecast-detail">
+                  <span>Holdout MAE · persistence · daily baseline</span>
+                  <strong>
+                    {forecast.model_mae} · {forecast.persistence_mae} · {forecast.seasonal_mae} µg/m³
+                  </strong>
+                </div>
+              </div>
+              {!forecast.beats_baselines && (
+                <p className="forecast-warning">
+                  This model did not beat the simple baselines in testing; treat its estimate with extra caution.
+                </p>
+              )}
+              <p className="forecast-disclaimer">{forecast.data_note}</p>
+            </>
+          )}
         </section>
 
         {geoError && (
