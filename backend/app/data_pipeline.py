@@ -61,7 +61,7 @@ AQI_CATEGORIES = (
     (400, "Very Poor"),
     (500, "Severe"),
 )
-MAX_STATION_AGE = timedelta(hours=6)
+MAX_STATION_AGE = timedelta(hours=12)
 MAX_INTERPOLATION_DISTANCE_KM = 30
 INTERPOLATION_STATION_COUNT = 4
 _cache_lock = Lock()
@@ -214,6 +214,9 @@ def add_indicative_aqi(region):
     region["indicative_aqi"] = None
     region["indicative_aqi_category"] = None
     region["indicative_aqi_dominant_pollutant"] = None
+    region["indicative_aqi_sub_indices"] = {
+        parameter.upper(): value for parameter, value in sub_indices.items()
+    }
     region["indicative_aqi_pollutants"] = sorted(
         parameter.upper() for parameter in sub_indices
     )
@@ -395,7 +398,7 @@ def fetch_official_stations(api_key=None):
 
     if not stations:
         raise AirQualityDataError(
-            "No fresh pollutant measurements are available from CPCB/KSPCB reference stations."
+            "No CPCB/KSPCB pollutant measurements are available from the last 12 hours."
         )
     return stations
 

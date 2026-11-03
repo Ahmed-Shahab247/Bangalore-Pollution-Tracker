@@ -48,6 +48,25 @@ function getRegionQuality(region, mapMetric) {
     : getAirQuality(region.pm25);
 }
 
+function getDistanceKm(lat1, lon1, lat2, lon2) {
+  const radians = (degrees) => (degrees * Math.PI) / 180;
+  const deltaLat = radians(lat2 - lat1);
+  const deltaLon = radians(lon2 - lon1);
+  const haversine = (
+    Math.sin(deltaLat / 2) ** 2
+    + Math.cos(radians(lat1))
+      * Math.cos(radians(lat2))
+      * Math.sin(deltaLon / 2) ** 2
+  );
+  return 6371 * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+}
+
+function getReadingAgeLabel(observedAt) {
+  if (!observedAt) return '';
+  const ageHours = Math.max(0, Math.floor((Date.now() - new Date(observedAt).getTime()) / 3600000));
+  return ageHours < 1 ? ' · updated within the last hour' : ` · ${ageHours}h old`;
+}
+
 function createAirQualityIcon(region, mapMetric) {
   const value = getRegionMetric(region, mapMetric);
   const tone = getRegionQuality(region, mapMetric).tone;
@@ -89,15 +108,15 @@ function MapResizeHandler() {
   return null;
 }
 
-function FitRegions({ regions }) {
+function FitRegions({ regions, userLocation }) {
   const map = useMap();
 
   useEffect(() => {
-    if (regions.length === 0) return;
+    if (regions.length === 0 || userLocation) return;
 
     const bounds = L.latLngBounds(regions.map((region) => [region.lat, region.lon]));
     map.fitBounds(bounds, { padding: [28, 28], maxZoom: 11 });
-  }, [map, regions]);
+  }, [map, regions, userLocation]);
 
   return null;
 }
@@ -113,11 +132,26 @@ function FocusNearestRegion({ result }) {
   return null;
 }
 
+function FocusUserLocation({ location }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!location) return;
+    map.flyTo([location.lat, location.lon], 13, { duration: 0.8 });
+  }, [location, map]);
+
+  return null;
+}
+
 FitRegions.propTypes = {
   regions: PropTypes.arrayOf(PropTypes.shape({
     lat: PropTypes.number.isRequired,
     lon: PropTypes.number.isRequired,
   })).isRequired,
+  userLocation: PropTypes.shape({
+    lat: PropTypes.number.isRequired,
+    lon: PropTypes.number.isRequired,
+  }),
 };
 
 FocusNearestRegion.propTypes = {
@@ -129,9 +163,18 @@ FocusNearestRegion.propTypes = {
   }),
 };
 
+FocusUserLocation.propTypes = {
+  location: PropTypes.shape({
+    lat: PropTypes.number.isRequired,
+    lon: PropTypes.number.isRequired,
+  }),
+};
+
 export default function App() {
   const [regions, setRegions] = useState([]);
+  const [knownAreas, setKnownAreas] = useState([]);
   const [regionsError, setRegionsError] = useState('');
+  const [areasError, setAreasError] = useState('');
   const [regionsLoading, setRegionsLoading] = useState(true);
   const [watchlist, setWatchlist] = useState([]);
   const [userLocation, setUserLocation] = useState(null);
@@ -143,12 +186,23 @@ export default function App() {
   const [lookingUpNearest, setLookingUpNearest] = useState(false);
   const [mapMetric, setMapMetric] = useState('pm25');
   const [forecast, setForecast] = useState(null);
+  const [forecastStatus, setForecastStatus] = useState(null);
   const [forecastError, setForecastError] = useState('');
   const [forecastLoading, setForecastLoading] = useState(true);
   const [forecastRefreshCount, setForecastRefreshCount] = useState(0);
   const [forecastHorizon, setForecastHorizon] = useState(3);
 
   useEffect(() => {
+    axios.get('http://localhost:8000/api/areas')
+      .then((response) => {
+        setKnownAreas(response.data);
+        setAreasError('');
+      })
+      .catch((error) => {
+        console.error('Error fetching area directory:', error);
+        setAreasError(error.response?.data?.detail ?? 'Could not load the area directory.');
+      });
+
     axios.get('http://localhost:8000/api/regions')
       .then((response) => {
         setRegions(response.data);
@@ -162,6 +216,32 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    axios.get('http://localhost:8000/api/forecast/status')
+      .then((response) => {
+        if (active) setForecastStatus(response.data);
+      })
+      .catch(() => {
+        if (active) {
+          setForecastStatus({
+            available: false,
+            message: 'Forecast status could not be checked. Make sure the backend is running, then reload.',
+          });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!forecastStatus) return undefined;
+    if (!forecastStatus.available) {
+      setForecast(null);
+      setForecastLoading(false);
+      return undefined;
+    }
+
     let active = true;
     setForecastLoading(true);
     axios.get('http://localhost:8000/api/forecast', {
@@ -187,7 +267,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [forecastHorizon, forecastRefreshCount]);
+  }, [forecastHorizon, forecastRefreshCount, forecastStatus]);
 
   const handleGetLocation = () => {
     setGeoError('');
@@ -208,7 +288,13 @@ export default function App() {
       },
       (error) => {
         console.error('Geolocation error:', error);
-        setGeoError('Could not access your location. Check your browser permissions and try again.');
+        setGeoError(
+          error.code === 1
+            ? 'Location access is blocked. Allow location permission for this site in your browser, then try again.'
+            : error.code === 2
+              ? 'Your device could not determine its location. Check that location services are enabled.'
+              : 'Location lookup timed out. Check your connection and try again.',
+        );
         setLoadingGeo(false);
       },
       { enableHighAccuracy: true, timeout: 10000 },
@@ -226,7 +312,39 @@ export default function App() {
   };
 
   const namedAreas = regions.filter((region) => region.is_area);
-  const matchingRegions = namedAreas.filter((region) => (
+  const listedAreas = namedAreas.length > 0
+    ? namedAreas
+    : knownAreas.map((area) => ({
+      ...area,
+      id: `area-${area.name.toLowerCase().replaceAll(' ', '-')}`,
+      is_area: true,
+    }));
+  const nearestUserArea = userLocation && namedAreas.length
+    ? namedAreas.reduce((nearest, area) => {
+      const distance = getDistanceKm(
+        userLocation.lat,
+        userLocation.lon,
+        area.lat,
+        area.lon,
+      );
+      return !nearest || distance < nearest.distance
+        ? { region: area, distance }
+        : nearest;
+    }, null)
+    : userLocation && listedAreas.length
+      ? listedAreas.reduce((nearest, area) => {
+        const distance = getDistanceKm(
+          userLocation.lat,
+          userLocation.lon,
+          area.lat,
+          area.lon,
+        );
+        return !nearest || distance < nearest.distance
+          ? { region: area, distance }
+          : nearest;
+      }, null)
+    : null;
+  const matchingRegions = listedAreas.filter((region) => (
     region.name.toLowerCase().includes(search.trim().toLowerCase())
   ));
   const filteredRegions = nearestResult ? [nearestResult.region] : matchingRegions;
@@ -319,7 +437,7 @@ export default function App() {
           <article className="overview-card">
             <div className="card-icon card-icon-lime"><MapPin size={19} /></div>
             <p className="metric-label">Areas covered</p>
-            <div className="metric-value">{monitoredCount.toString().padStart(2, '0')} <span>areas</span></div>
+            <div className="metric-value">{(regionsError ? 0 : monitoredCount).toString().padStart(2, '0')} <span>areas</span></div>
             <p className="metric-note">Areas with a fresh nearby station reading</p>
           </article>
           <article className="overview-card">
@@ -338,7 +456,7 @@ export default function App() {
             <div>
               <p className="section-kicker">EXPERIMENTAL CITY-LEVEL OUTLOOK</p>
               <h2>{forecastHorizon}-hour PM2.5 forecast</h2>
-              <p>Machine-learning estimate for Bengaluru, based on recent modelled air and weather data.</p>
+              <p>Weather-driven estimate trained against historical Bengaluru ground-station PM2.5 observations.</p>
             </div>
             <div className="forecast-actions">
               <div className="map-mode-toggle forecast-horizon-toggle" role="group" aria-label="Forecast horizon">
@@ -348,6 +466,7 @@ export default function App() {
                     type="button"
                     className={forecastHorizon === horizon ? 'is-selected' : ''}
                     aria-pressed={forecastHorizon === horizon}
+                    disabled={!forecastStatus?.available || forecastLoading}
                     onClick={() => setForecastHorizon(horizon)}
                   >
                     {horizon} hours
@@ -357,7 +476,7 @@ export default function App() {
               <button
                 className="forecast-refresh"
                 onClick={() => setForecastRefreshCount((count) => count + 1)}
-                disabled={forecastLoading}
+                disabled={!forecastStatus?.available || forecastLoading}
                 aria-label="Refresh PM2.5 forecast"
               >
                 <RefreshCw size={14} />
@@ -366,6 +485,11 @@ export default function App() {
             </div>
           </div>
           {forecastLoading && <p className="forecast-message">Loading forecast…</p>}
+          {forecastStatus && !forecastStatus.available && (
+            <p className="forecast-message forecast-unavailable" role="status">
+              {forecastStatus.message}
+            </p>
+          )}
           {forecastError && <p className="forecast-message forecast-error" role="alert">{forecastError}</p>}
           {forecast && !forecastError && (
             <>
@@ -395,7 +519,7 @@ export default function App() {
                   </strong>
                 </div>
                 <div className="forecast-detail">
-                  <span>Holdout MAE · persistence · daily baseline</span>
+                  <span>Seasonal holdout MAE · persistence · daily baseline</span>
                   <strong>
                     {forecast.model_mae} · {forecast.persistence_mae} · {forecast.seasonal_mae} µg/m³
                   </strong>
@@ -444,7 +568,8 @@ export default function App() {
               ) : (
                 <div className="watchlist-items">
                   {watchlist.map((item) => {
-                    const quality = getAirQuality(item.pm25);
+                    const value = getRegionMetric(item, mapMetric);
+                    const quality = getRegionQuality(item, mapMetric);
                     return (
                       <div className="watchlist-item" key={item.name}>
                         <span className={`place-marker ${quality.tone}`}><MapPin size={16} /></span>
@@ -452,7 +577,13 @@ export default function App() {
                           <strong>{item.name}</strong>
                           <span>
                             <i className={`tiny-dot ${quality.tone}`} />
-                            {Number.isFinite(item.pm25) ? `${quality.label} · PM2.5 ${item.pm25}` : 'No fresh PM2.5 reading'}
+                              {Number.isFinite(value)
+                                ? mapMetric === 'aqi'
+                                  ? `${quality.label} · Indicative AQI ${value}`
+                                  : `${quality.label} · PM2.5 ${value}`
+                                : mapMetric === 'aqi'
+                                  ? 'Indicative AQI unavailable'
+                                  : 'No fresh PM2.5 reading'}
                           </span>
                         </div>
                         <button
@@ -474,7 +605,29 @@ export default function App() {
                 <div className="location-card-icon"><Navigation size={17} /></div>
                 <div>
                   <p className="location-title">You’re on the map</p>
-                  <p className="location-coordinates">{userLocation.lat.toFixed(4)}° N, {userLocation.lon.toFixed(4)}° E</p>
+                  {nearestUserArea ? (
+                    <>
+                      <p className="location-coordinates">
+                        Nearest listed area: {nearestUserArea.region.name} · {nearestUserArea.distance.toFixed(1)} km
+                        {getReadingAgeLabel(nearestUserArea.region.observed_at)}
+                      </p>
+                      <p className="location-quality">
+                        {regionsError
+                          ? 'Live pollution score unavailable while station data is offline'
+                          : mapMetric === 'aqi'
+                          ? Number.isFinite(nearestUserArea.region.indicative_aqi)
+                            ? <>Indicative AQI <b>{nearestUserArea.region.indicative_aqi}</b> · {getIndicativeAqiQuality(nearestUserArea.region.indicative_aqi).label}</>
+                            : 'Indicative AQI unavailable for this area'
+                          : Number.isFinite(nearestUserArea.region.pm25)
+                            ? <>PM2.5 <b>{nearestUserArea.region.pm25} µg/m³</b> · {getAirQuality(nearestUserArea.region.pm25).label}</>
+                            : 'No fresh PM2.5 estimate available for this area'}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="location-coordinates">
+                      {userLocation.lat.toFixed(4)}° N, {userLocation.lon.toFixed(4)}° E
+                    </p>
+                  )}
                 </div>
                 <Check className="location-check" size={18} />
               </article>
@@ -486,7 +639,7 @@ export default function App() {
                   <p className="section-kicker">EXPLORE THE CITY</p>
                   <h2>Nearby areas</h2>
                 </div>
-                <span className="areas-total">{namedAreas.length} areas</span>
+                <span className="areas-total">{listedAreas.length} areas</span>
               </div>
               <form className="area-search" onSubmit={handleFindClosest}>
                 <label className="search-field">
@@ -518,12 +671,12 @@ export default function App() {
               <div className="area-list">
                 {filteredRegions.length === 0 ? (
                   <p className="no-results">
-                    {regionsError || (regionsLoading ? 'Connecting to official monitoring stations…' : 'No neighborhoods match your search.')}
+                    {regionsError
+                      ? `Neighborhood names are available, but live pollution readings are offline. ${regionsError}`
+                      : areasError || (regionsLoading ? 'Connecting to official monitoring stations…' : 'No neighborhoods match your search.')}
                   </p>
                 ) : filteredRegions.map((region) => {
-                  const quality = Number.isFinite(region.pm25)
-                    ? getAirQuality(region.pm25)
-                    : { label: 'Unavailable', tone: 'unknown' };
+                  const quality = getRegionQuality(region, mapMetric);
                   const isPinned = watchlist.some((item) => item.name === region.name);
                   return (
                     <div className="area-row" key={region.id ?? region.name}>
@@ -531,9 +684,26 @@ export default function App() {
                       <div className="area-copy">
                         <strong>{region.name}</strong>
                         <span>
-                          {Number.isFinite(region.pm25)
-                            ? <>PM2.5 <b>{region.pm25}</b> · {quality.label} · {region.is_interpolated ? 'estimated' : 'measured'}</>
-                            : 'No fresh official reading nearby'}
+                          {mapMetric === 'aqi'
+                            ? Number.isFinite(region.indicative_aqi)
+                              ? <>
+                                Indicative AQI <b>{region.indicative_aqi}</b> · {quality.label}
+                                {region.indicative_aqi_dominant_pollutant
+                                  ? ` · driven by ${region.indicative_aqi_dominant_pollutant}`
+                                  : ''}
+                                {' · '}{region.is_interpolated ? 'estimated' : 'measured'}
+                                {getReadingAgeLabel(region.observed_at)}
+                              </>
+                              : 'Indicative AQI unavailable · needs PM2.5/PM10 and 3 current pollutants'
+                            : Number.isFinite(region.pm25)
+                              ? <>
+                                PM2.5 <b>{region.pm25}</b> · {quality.label}
+                                {' · '}{region.is_interpolated ? 'estimated' : 'measured'}
+                                {getReadingAgeLabel(region.observed_at)}
+                              </>
+                              : regionsError
+                                ? 'Live reading unavailable while station data is offline'
+                                : 'No fresh official reading nearby'}
                         </span>
                       </div>
                       <button
@@ -596,8 +766,9 @@ export default function App() {
                 className="pollution-map"
               >
                 <MapResizeHandler />
-                <FitRegions regions={regions} />
+                <FitRegions regions={regions} userLocation={userLocation} />
                 <FocusNearestRegion result={nearestResult} />
+                <FocusUserLocation location={userLocation} />
                 <TileLayer
                   attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -653,7 +824,34 @@ export default function App() {
                 })}
                 {userLocation && (
                   <Marker position={[userLocation.lat, userLocation.lon]}>
-                    <Popup><strong>Your current location</strong></Popup>
+                    <Popup>
+                      <div className="map-popup">
+                        <span className="area-dot good" />
+                        <div>
+                          <strong>Your current location</strong>
+                          {nearestUserArea && (
+                            <>
+                              <p>
+                                Nearest listed area: <b>{nearestUserArea.region.name}</b>
+                                {' · '}{nearestUserArea.distance.toFixed(1)} km
+                                {getReadingAgeLabel(nearestUserArea.region.observed_at)}
+                              </p>
+                              <p>
+                                {regionsError
+                                  ? 'Live pollution score unavailable while station data is offline'
+                                  : mapMetric === 'aqi'
+                                  ? Number.isFinite(nearestUserArea.region.indicative_aqi)
+                                    ? <>Indicative AQI <b>{nearestUserArea.region.indicative_aqi}</b> · {getIndicativeAqiQuality(nearestUserArea.region.indicative_aqi).label}</>
+                                    : 'Indicative AQI unavailable for this area'
+                                  : Number.isFinite(nearestUserArea.region.pm25)
+                                    ? <>PM2.5 <b>{nearestUserArea.region.pm25} µg/m³</b> · {getAirQuality(nearestUserArea.region.pm25).label}</>
+                                    : 'No fresh PM2.5 estimate available for this area'}
+                              </p>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </Popup>
                   </Marker>
                 )}
               </MapContainer>

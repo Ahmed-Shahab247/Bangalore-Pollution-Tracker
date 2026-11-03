@@ -14,7 +14,7 @@ from app.data_pipeline import (
     get_live_regions,
     predict_live_cluster,
 )
-from app.forecasting import ForecastError, get_pm25_forecast
+from app.forecasting import ForecastError, get_forecast_status, get_pm25_forecast
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -53,6 +53,11 @@ def predict_cluster(payload: PollutionPayload):
     except AirQualityDataError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     return {"location": payload.location_name, **cluster}
+
+
+@app.get("/api/forecast/status")
+def get_air_quality_forecast_status():
+    return get_forecast_status()
 
 
 @app.get("/api/forecast")
@@ -136,6 +141,13 @@ def get_all_regions():
         return get_live_regions(get_area_locations())
     except AirQualityDataError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/areas")
+def get_all_area_locations():
+    """Return the neighborhood directory even when live station data is unavailable."""
+    return get_area_locations()
+
 
 def calculate_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculate the great-circle distance between two coordinates."""

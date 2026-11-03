@@ -26,6 +26,8 @@ WEATHER_FIELDS = (
     "wind_speed_10m",
     "wind_direction_10m",
     "temperature_2m",
+    "surface_pressure",
+    "boundary_layer_height",
     "relative_humidity_2m",
     "precipitation",
 )
@@ -44,6 +46,8 @@ CSV_FIELDS = (
     "wind_u",
     "wind_v",
     "temperature_2m",
+    "surface_pressure",
+    "boundary_layer_height",
     "relative_humidity_2m",
     "precipitation",
     "air_quality_spatial_resolution_km",
@@ -145,6 +149,12 @@ def fetch_history(start: date, end: date):
                 "temperature_2m": _finite_or_empty(
                     weather_values["temperature_2m"][index]
                 ),
+                "surface_pressure": _finite_or_empty(
+                    weather_values["surface_pressure"][index]
+                ),
+                "boundary_layer_height": _finite_or_empty(
+                    weather_values["boundary_layer_height"][index]
+                ),
                 "relative_humidity_2m": _finite_or_empty(
                     weather_values["relative_humidity_2m"][index]
                 ),
@@ -166,9 +176,14 @@ def write_rows(output: Path, new_rows):
     if output.exists():
         with output.open("r", encoding="utf-8", newline="") as file:
             reader = csv.DictReader(file)
-            if reader.fieldnames != list(CSV_FIELDS):
+            if (
+                reader.fieldnames is None
+                or not set(reader.fieldnames).issubset(CSV_FIELDS)
+                or not {"observed_at", "pm25"}.issubset(reader.fieldnames)
+            ):
                 raise ValueError(f"{output} has unexpected columns; refusing to overwrite it.")
             for row in reader:
+                row = {field: row.get(field, "") for field in CSV_FIELDS}
                 merged[row["observed_at"]] = row
     merged.update(new_rows)
 

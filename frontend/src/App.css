@@ -340,6 +340,19 @@
   color: #9a664a;
 }
 
+.forecast-unavailable {
+  padding: 10px 12px;
+  border: 1px solid #e8eee7;
+  border-radius: 9px;
+  color: #68776d;
+  background: #f7f9f6;
+}
+
+.forecast-horizon-toggle button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
 .forecast-disclaimer {
   padding-top: 9px;
   border-top: 1px solid #edf1ec;
@@ -691,6 +704,17 @@
   margin: 0;
   color: #839389;
   font-size: 9px;
+}
+
+.location-quality {
+  margin: 5px 0 0;
+  color: #5e7565;
+  font-size: 10px;
+}
+
+.location-quality b {
+  color: #395c43;
+  font-weight: 700;
 }
 
 .location-check {
