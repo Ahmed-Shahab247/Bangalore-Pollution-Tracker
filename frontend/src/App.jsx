@@ -519,15 +519,17 @@ export default function App() {
                   </strong>
                 </div>
                 <div className="forecast-detail">
-                  <span>Seasonal holdout MAE · persistence · daily baseline</span>
+                  <span>
+                    Monthly holdout MAE ({forecast.selected_model?.replaceAll('_', ' ')}) · persistence · daily baseline
+                  </span>
                   <strong>
                     {forecast.model_mae} · {forecast.persistence_mae} · {forecast.seasonal_mae} µg/m³
                   </strong>
                 </div>
               </div>
-              {!forecast.beats_baselines && (
+              {['persistence', 'seasonal_24h'].includes(forecast.selected_model) && (
                 <p className="forecast-warning">
-                  This model did not beat the simple baselines in testing; treat its estimate with extra caution.
+                  No trained model beat the baselines in testing, so this forecast uses the best-performing baseline.
                 </p>
               )}
               <p className="forecast-disclaimer">{forecast.data_note}</p>

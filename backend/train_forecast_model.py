@@ -1,10 +1,11 @@
-"""Train, seasonally evaluate, and save Bengaluru PM2.5 forecasting models."""
+"""Train, monthly-backtest, and save Bengaluru PM2.5 forecasting models."""
 
 import argparse
 from pathlib import Path
 
 from app.forecasting import (
     GROUND_STATION_DATA_PATH,
+    MIN_STATIONS_PER_HOUR,
     MODEL_PATH,
     WEATHER_DATA_PATH,
     train_forecaster,
@@ -12,31 +13,38 @@ from app.forecasting import (
 
 
 def _print_evaluation(bundle):
-    print(
-        "horizon  holdout    model                    n      MAE      RMSE"
-    )
+    print("horizon  holdout    model                    n      MAE      RMSE")
     for horizon, result in bundle["models"].items():
         evaluation = result["evaluation"]
         metrics = evaluation["overall"]
         for model_name, scores in metrics.items():
             print(
-                f"{horizon:>3} h    all-seasons {model_name:<24} "
+                f"{horizon:>3} h    pooled      {model_name:<24} "
                 f"{evaluation['evaluated_examples']:>5} "
                 f"{scores['mae']:>8.2f} {scores['rmse']:>8.2f}"
             )
-        for season, holdout in evaluation["seasonal_holdouts"].items():
+        for month, holdout in evaluation["monthly_holdouts"].items():
             for model_name, scores in holdout["metrics"].items():
                 print(
-                    f"{horizon:>3} h    {season:<12} {model_name:<24} "
+                    f"{horizon:>3} h    {month:<12} {model_name:<24} "
                     f"{holdout['test_examples']:>5} "
                     f"{scores['mae']:>8.2f} {scores['rmse']:>8.2f}"
                 )
         print(
-            f"{horizon}-hour model trained on {result['sample_count']} "
-            f"complete city-hour examples across {result['station_count']} stations."
+            f"{horizon}-hour selection: {result['selected_model']} "
+            f"(MAE {result['model_metrics']['mae']:.2f}); "
+            f"persistence skill={result['skill_score_vs_persistence']:.3f}; "
+            f"MAE difference vs persistence 95% block-bootstrap CI="
+            f"{evaluation['persistence_mae_difference_ci']['low']:.2f} to "
+            f"{evaluation['persistence_mae_difference_ci']['high']:.2f}."
         )
-        if evaluation["skipped_seasons"]:
-            print(f"Skipped seasons: {evaluation['skipped_seasons']}")
+        print(
+            f"Trained on {result['sample_count']} city-hour examples with at least "
+            f"the required {MIN_STATIONS_PER_HOUR} reporting stations across "
+            f"{result['station_count']} stations."
+        )
+        if evaluation["skipped_months"]:
+            print(f"Skipped months: {evaluation['skipped_months']}")
 
 
 def main():
@@ -45,7 +53,7 @@ def main():
         "--weather",
         type=Path,
         default=WEATHER_DATA_PATH,
-        help="Open-Meteo historical weather CSV used only for model features.",
+        help="Historical forecast-weather CSV used only for model features.",
     )
     parser.add_argument(
         "--ground-stations",
